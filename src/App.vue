@@ -34,6 +34,9 @@
                   <p class="text-grey-darken-1 mb-4">
                     ลากและปล่อยไฟล์ หรือคลิกเพื่อเลือกไฟล์
                   </p>
+                  <p class="text-caption text-grey-darken-1 mb-4">
+                    (ขนาดไฟล์สูงสุด 10 MB ต่อไฟล์)
+                  </p>
                   <v-file-input
                     v-model="files"
                     multiple
@@ -58,12 +61,18 @@
                 <!-- Processing State -->
                 <div v-else-if="isProcessing">
                   <v-progress-circular
-                    indeterminate
+                    :model-value="conversionProgress"
+                    :size="80"
+                    :width="8"
                     color="primary"
-                    size="60"
                     class="mb-4"
-                  />
-                  <h3 class="text-h5">กำลังแปลงไฟล์...</h3>
+                  >
+                    <span class="text-h6">{{ conversionProgress }}%</span>
+                  </v-progress-circular>
+                  <h3 class="text-h5 mb-2">กำลังแปลงไฟล์...</h3>
+                  <p class="text-grey-darken-1">
+                    {{ convertedCount }} / {{ images.length }} ไฟล์
+                  </p>
                 </div>
 
                 <!-- Uploaded State -->
@@ -84,9 +93,47 @@
                   </v-icon>
                   <h3 class="text-h5 text-success mb-3">แปลงเสร็จเรียบร้อย!</h3>
                   <p class="text-grey-darken-1">
-                    แปลงไฟล์สำเร็จ {{ images.length }} ไฟล์
+                    แปลงไฟล์สำเร็จ {{ successCount }} ไฟล์
+                    <span v-if="errorCount > 0" class="text-error">
+                      (ล้มเหลว {{ errorCount }} ไฟล์)
+                    </span>
                   </p>
                 </div>
+              </v-card-text>
+            </v-card>
+          </v-col>
+        </v-row>
+
+        <!-- Quality Settings -->
+        <v-row v-if="images.length && !convertedAll" justify="center">
+          <v-col cols="12" md="8" lg="6">
+            <v-card class="mb-6 elevation-2">
+              <v-card-title class="d-flex align-center">
+                <v-icon class="mr-2">mdi-tune</v-icon>
+                ตั้งค่าคุณภาพ
+              </v-card-title>
+              <v-card-text>
+                <div class="d-flex align-center">
+                  <v-slider
+                    v-model="quality"
+                    :min="0.1"
+                    :max="1"
+                    :step="0.1"
+                    thumb-label
+                    :disabled="isProcessing"
+                    class="mr-4"
+                  >
+                    <template v-slot:thumb-label="{ modelValue }">
+                      {{ Math.round(modelValue * 100) }}%
+                    </template>
+                  </v-slider>
+                  <v-chip color="primary" variant="flat" class="ml-2">
+                    {{ Math.round(quality * 100) }}%
+                  </v-chip>
+                </div>
+                <p class="text-caption text-grey-darken-1 mt-2">
+                  คุณภาพสูง = ขนาดไฟล์ใหญ่ / คุณภาพต่ำ = ขนาดไฟล์เล็ก
+                </p>
               </v-card-text>
             </v-card>
           </v-col>
@@ -110,7 +157,10 @@
                   >
                     <v-card 
                       class="image-card"
-                      :class="{ 'converted': img.converted }"
+                      :class="{ 
+                        'converted': img.converted,
+                        'error': img.error
+                      }"
                       elevation="2"
                     >
                       <!-- Image Preview -->
@@ -121,24 +171,48 @@
                           class="preview-img-compact"
                         />
                         <v-overlay 
-                          :model-value="img.converted"
+                          :model-value="img.converted || img.error"
                           class="align-center justify-center"
                           contained
                         >
-                          <v-icon size="24" color="success">
+                          <v-icon 
+                            v-if="img.converted" 
+                            size="24" 
+                            color="success"
+                          >
                             mdi-check-circle
+                          </v-icon>
+                          <v-icon 
+                            v-if="img.error" 
+                            size="24" 
+                            color="error"
+                          >
+                            mdi-alert-circle
                           </v-icon>
                         </v-overlay>
                       </div>
                       
                       <!-- File Info -->
                       <v-card-text class="pa-2">
-                        <div class="text-body-1 font-weight-medium mb-1 text-truncate">
+                        <div class="text-body-2 font-weight-medium mb-1 text-truncate" :title="img.name">
                           {{ img.name }}
                         </div>
-                        <div class="text-body-2 text-grey-darken-1 mb-2">
-                          {{ (img.size / 1024).toFixed(1) }} KB
+                        <div class="text-caption text-grey-darken-1 mb-2">
+                          {{ formatFileSize(img.size) }}
+                          <span v-if="img.converted && img.webpSize" class="text-success">
+                            → {{ formatFileSize(img.webpSize) }}
+                          </span>
                         </div>
+                        
+                        <!-- Error Message -->
+                        <v-alert
+                          v-if="img.error"
+                          type="error"
+                          density="compact"
+                          class="text-caption mb-2"
+                        >
+                          {{ img.errorMessage }}
+                        </v-alert>
                         
                         <!-- Action Buttons -->
                         <div class="d-flex flex-column ga-1">
@@ -196,7 +270,7 @@
                 color="success"
                 size="large"
                 variant="flat"
-                :disabled="!convertedAll"
+                :disabled="successCount === 0"
                 @click="downloadAll"
                 class="mx-2 mb-4"
               >
@@ -209,6 +283,7 @@
                 size="large"
                 variant="outlined"
                 @click="addMoreFiles"
+                :disabled="isProcessing"
                 class="mx-2 mb-4"
               >
                 <v-icon class="mr-2">mdi-plus</v-icon>
@@ -220,6 +295,7 @@
                 size="large"
                 variant="outlined"
                 @click="resetAll"
+                :disabled="isProcessing"
                 class="mx-2 mb-4"
               >
                 <v-icon class="mr-2">mdi-refresh</v-icon>
@@ -247,7 +323,7 @@
                       </v-icon>
                       <h4 class="text-h6 mb-2">รวดเร็ว</h4>
                       <p class="text-body-2">
-                        แปลงไฟล์ได้อย่างรวดเร็วใน
+                        แปลงไฟล์ได้อย่างรวดเร็วใน browser ของคุณ
                       </p>
                     </div>
                   </v-col>
@@ -291,6 +367,47 @@
           @change="handleAdditionalUpload"
         />
       </v-container>
+
+      <!-- Snackbar for notifications -->
+      <v-snackbar
+        v-model="snackbar.show"
+        :color="snackbar.color"
+        :timeout="3000"
+        location="top"
+      >
+        {{ snackbar.message }}
+        <template v-slot:actions>
+          <v-btn
+            variant="text"
+            @click="snackbar.show = false"
+          >
+            ปิด
+          </v-btn>
+        </template>
+      </v-snackbar>
+
+      <!-- Footer -->
+      <v-footer class="bg-grey-darken-4 text-center py-6 mt-8">
+        <v-container>
+          <v-row>
+            <v-col cols="12">
+              <div class="d-flex flex-column align-center">
+                <v-divider class="my-3 bg-grey-darken-2" style="max-width: 200px;"></v-divider>
+
+                <div class="text-grey-lighten-2 text-body-2">
+                  <v-icon size="16" class="mr-1">mdi-copyright</v-icon>
+                  {{ new Date().getFullYear() }} สร้างโดย 
+                  <span class="text-primary font-weight-bold mx-1">S.Chollasit</span>
+                </div>
+
+                <div class="text-grey-darken-1 text-caption mt-2">
+                  Made with <v-icon size="12" color="red" class="mx-1">mdi-heart</v-icon> using Vue.js & Vuetify
+                </div>
+              </div>
+            </v-col>
+          </v-row>
+        </v-container>
+      </v-footer>
     </v-main>
   </v-app>
 </template>
@@ -307,14 +424,61 @@ interface ImageItem {
   converted: boolean
   url: string | null
   preview: string
+  error: boolean
+  errorMessage: string
+  webpSize: number | null
 }
+
+interface Snackbar {
+  show: boolean
+  message: string
+  color: string
+}
+
+const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10 MB
 
 const files = ref<File[]>([])
 const images = ref<ImageItem[]>([])
 const isDragging = ref(false)
 const isProcessing = ref(false)
+const quality = ref(0.8)
+const convertedCount = ref(0)
 const fileInput = ref<InstanceType<typeof VFileInput>>()
 const additionalFileInput = ref<HTMLInputElement>()
+const snackbar = ref<Snackbar>({
+  show: false,
+  message: '',
+  color: 'info'
+})
+
+// Computed properties
+const conversionProgress = computed(() => {
+  if (images.value.length === 0) return 0
+  return Math.round((convertedCount.value / images.value.length) * 100)
+})
+
+const convertedAll = computed(() =>
+  images.value.length > 0 && images.value.every((i) => i.converted || i.error)
+)
+
+const successCount = computed(() => 
+  images.value.filter(i => i.converted && !i.error).length
+)
+
+const errorCount = computed(() => 
+  images.value.filter(i => i.error).length
+)
+
+// Helper function
+const formatFileSize = (bytes: number): string => {
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+}
+
+const showSnackbar = (message: string, color: string = 'info') => {
+  snackbar.value = { show: true, message, color }
+}
 
 // เปิด file dialog
 const triggerFileUpload = () => {
@@ -336,21 +500,49 @@ const handleDrop = (e: DragEvent) => {
 
 // ประมวลผลไฟล์
 const processFiles = (fileList: File[]) => {
+  let validFiles = 0
+  let skippedFiles = 0
+
   for (const file of fileList) {
-    if (file.type.startsWith('image/')) {
-      const reader = new FileReader()
-      reader.onload = (e) => {
-        images.value.push({
-          file,
-          name: file.name,
-          size: file.size,
-          converted: false,
-          url: null,
-          preview: e.target?.result as string
-        })
-      }
-      reader.readAsDataURL(file)
+    // ตรวจสอบว่าเป็นไฟล์รูปภาพ
+    if (!file.type.startsWith('image/')) {
+      skippedFiles++
+      continue
     }
+
+    // ตรวจสอบขนาดไฟล์
+    if (file.size > MAX_FILE_SIZE) {
+      showSnackbar(`ไฟล์ ${file.name} มีขนาดใหญ่เกิน 10 MB`, 'error')
+      skippedFiles++
+      continue
+    }
+
+    validFiles++
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      images.value.push({
+        file,
+        name: file.name,
+        size: file.size,
+        converted: false,
+        url: null,
+        preview: e.target?.result as string,
+        error: false,
+        errorMessage: '',
+        webpSize: null
+      })
+    }
+    reader.onerror = () => {
+      showSnackbar(`ไม่สามารถอ่านไฟล์ ${file.name}`, 'error')
+    }
+    reader.readAsDataURL(file)
+  }
+
+  if (validFiles > 0) {
+    showSnackbar(`อัปโหลดไฟล์สำเร็จ ${validFiles} ไฟล์`, 'success')
+  }
+  if (skippedFiles > 0) {
+    showSnackbar(`ข้าม ${skippedFiles} ไฟล์ (ไม่รองรับหรือขนาดใหญ่เกินไป)`, 'warning')
   }
 }
 
@@ -364,69 +556,119 @@ const handleAdditionalUpload = (e: Event) => {
   if (target.files) {
     const newFiles = Array.from(target.files)
     processFiles(newFiles)
+    target.value = '' // Reset input
   }
 }
 
 // ฟังก์ชันแปลงไฟล์เป็น WebP
-const convertToWebp = (file: File): Promise<{ blob: Blob; url: string }> =>
-  new Promise((resolve) => {
+const convertToWebp = (file: File, qualityValue: number): Promise<{ blob: Blob; url: string }> =>
+  new Promise((resolve, reject) => {
     const reader = new FileReader()
+    
+    reader.onerror = () => reject(new Error('ไม่สามารถอ่านไฟล์'))
+    
     reader.onload = (e) => {
       const img = new Image()
+      img.onerror = () => reject(new Error('ไม่สามารถโหลดรูปภาพ'))
+      
       img.src = e.target?.result as string
       img.onload = () => {
-        const canvas = document.createElement('canvas')
-        canvas.width = img.width
-        canvas.height = img.height
-        const ctx = canvas.getContext('2d')
-        if (!ctx) return
-        ctx.drawImage(img, 0, 0)
-        canvas.toBlob(
-          (blob) => {
-            if (!blob) return
-            const url = URL.createObjectURL(blob)
-            resolve({ blob, url })
-          },
-          'image/webp',
-          0.8
-        )
+        try {
+          const canvas = document.createElement('canvas')
+          canvas.width = img.width
+          canvas.height = img.height
+          const ctx = canvas.getContext('2d')
+          
+          if (!ctx) {
+            reject(new Error('ไม่สามารถสร้าง canvas context'))
+            return
+          }
+          
+          ctx.drawImage(img, 0, 0)
+          canvas.toBlob(
+            (blob) => {
+              if (!blob) {
+                reject(new Error('ไม่สามารถแปลงเป็น WebP'))
+                return
+              }
+              const url = URL.createObjectURL(blob)
+              resolve({ blob, url })
+            },
+            'image/webp',
+            qualityValue
+          )
+        } catch (error) {
+          reject(error)
+        }
       }
     }
     reader.readAsDataURL(file)
   })
 
-// แปลงทั้งหมด
+// แปลงทั้งหมด (แบบ parallel)
 const convertAll = async () => {
   isProcessing.value = true
-  for (const img of images.value) {
-    if (!img.converted) {
-      const { url } = await convertToWebp(img.file)
-      img.converted = true
-      img.url = url
-    }
-  }
-  isProcessing.value = false
-}
+  convertedCount.value = 0
 
-const convertedAll = computed(() =>
-  images.value.length > 0 && images.value.every((i) => i.converted)
-)
+  // แปลงแบบ parallel เพื่อความเร็ว
+  const promises = images.value.map(async (img) => {
+    if (!img.converted && !img.error) {
+      try {
+        const { blob, url } = await convertToWebp(img.file, quality.value)
+        img.converted = true
+        img.url = url
+        img.webpSize = blob.size
+        img.error = false
+        img.errorMessage = ''
+      } catch (error) {
+        img.error = true
+        img.errorMessage = error instanceof Error ? error.message : 'เกิดข้อผิดพลาด'
+      } finally {
+        convertedCount.value++
+      }
+    }
+  })
+
+  await Promise.all(promises)
+  isProcessing.value = false
+
+  if (errorCount.value > 0) {
+    showSnackbar(`แปลงสำเร็จ ${successCount.value} ไฟล์, ล้มเหลว ${errorCount.value} ไฟล์`, 'warning')
+  } else {
+    showSnackbar(`แปลงสำเร็จทั้งหมด ${successCount.value} ไฟล์!`, 'success')
+  }
+}
 
 // ดาวน์โหลดทั้งหมด (zip)
 const downloadAll = async () => {
-  const zip = new JSZip()
-  for (const img of images.value) {
-    if (img.converted && img.url) {
-      const res = await fetch(img.url)
-      const blob = await res.blob()
-      zip.file(img.name.replace(/\.[^.]+$/, '.webp'), blob)
+  try {
+    const zip = new JSZip()
+    let addedFiles = 0
+
+    for (const img of images.value) {
+      if (img.converted && img.url && !img.error) {
+        const res = await fetch(img.url)
+        const blob = await res.blob()
+        zip.file(img.name.replace(/\.[^.]+$/, '.webp'), blob)
+        addedFiles++
+      }
     }
+
+    if (addedFiles === 0) {
+      showSnackbar('ไม่มีไฟล์ที่สามารถดาวน์โหลดได้', 'warning')
+      return
+    }
+
+    const content = await zip.generateAsync({ type: 'blob' })
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(content)
+    link.download = 'images-webp.zip'
+    link.click()
+    
+    showSnackbar(`ดาวน์โหลด ${addedFiles} ไฟล์เรียบร้อย!`, 'success')
+  } catch (error) {
+    showSnackbar('เกิดข้อผิดพลาดในการสร้างไฟล์ ZIP', 'error')
   }
-  const content = await zip.generateAsync({ type: 'blob' })
-  const link = document.createElement('a')
-  link.href = URL.createObjectURL(content)
-  link.download = 'images-webp.zip'
-  link.click()
 }
 
 // ลบรูป
@@ -435,7 +677,12 @@ const removeImage = (index: number) => {
   if (image && image.url) {
     URL.revokeObjectURL(image.url)
   }
+  if (image && image.preview) {
+    URL.revokeObjectURL(image.preview)
+  }
   images.value.splice(index, 1)
+  
+  showSnackbar('ลบไฟล์เรียบร้อย', 'info')
 }
 
 // รีเซ็ตใหม่
@@ -443,10 +690,15 @@ const resetAll = () => {
   // Clean up object URLs
   images.value.forEach(img => {
     if (img.url) URL.revokeObjectURL(img.url)
+    if (img.preview) URL.revokeObjectURL(img.preview)
   })
   files.value = []
   images.value = []
   isProcessing.value = false
+  convertedCount.value = 0
+  quality.value = 0.8
+  
+  showSnackbar('รีเซ็ตเรียบร้อย', 'info')
 }
 </script>
 
@@ -480,20 +732,16 @@ const resetAll = () => {
   box-shadow: 0 8px 25px rgba(0,0,0,0.15) !important;
 }
 
-.image-card:hover .preview-img-small {
+.image-card:hover .preview-img-compact {
   transform: scale(1.05);
-}
-
-.gap-2 > * + * {
-  margin-top: 8px;
-}
-
-.ga-2 {
-  gap: 8px;
 }
 
 .image-card.converted {
   border: 2px solid rgb(var(--v-theme-success));
+}
+
+.image-card.error {
+  border: 2px solid rgb(var(--v-theme-error));
 }
 
 .action-buttons {
